@@ -702,6 +702,7 @@
   <script>
     // URL oficial del formulario de Microsoft Forms
     const FORMS_URL = 'https://forms.cloud.microsoft/e/FXZHkdBe8y';
+    const STORAGE_KEY = 'ufv_vr_reservations_data_v2';
 
     // Registro de reservas extraídas
     let upcomingReservations = [];
@@ -713,7 +714,7 @@
       if (toast && text) {
         text.textContent = message;
         toast.classList.add('visible');
-        setTimeout(() => toast.classList.remove('visible'), 3600);
+        setTimeout(() => toast.classList.remove('visible'), 4000);
       }
     }
 
@@ -745,13 +746,19 @@
       window.open(FORMS_URL, '_blank');
     }
 
-    // Parser robusto de fechas (formato DD/MM/YYYY, ISO y números de serie de Excel)
-    function parseDateString(dateVal, timeVal) {
+    // Parser universal y robusto de fechas
+    function parseDateUniversal(dateVal, timeVal) {
       if (!dateVal) return null;
 
       let year, month, day;
 
-      if (typeof dateVal === 'number') {
+      // Si SheetJS ya lo interpretó como objeto Date
+      if (dateVal instanceof Date && !isNaN(dateVal.getTime())) {
+        year = dateVal.getFullYear();
+        month = dateVal.getMonth();
+        day = dateVal.getDate();
+      } else if (typeof dateVal === 'number') {
+        // Número de serie de Excel (días desde 30/12/1899)
         const excelEpoch = new Date(Date.UTC(1899, 11, 30));
         const jsDate = new Date(excelEpoch.getTime() + dateVal * 86400000);
         year = jsDate.getUTCFullYear();
@@ -770,9 +777,25 @@
         } else if (clean.includes('-')) {
           const parts = clean.split('-');
           if (parts.length === 3) {
-            year = parseInt(parts[0], 10);
-            month = parseInt(parts[1], 10) - 1;
-            day = parseInt(parts[2], 10);
+            if (parts[0].length === 4) {
+              // YYYY-MM-DD
+              year = parseInt(parts[0], 10);
+              month = parseInt(parts[1], 10) - 1;
+              day = parseInt(parts[2], 10);
+            } else {
+              // DD-MM-YYYY
+              day = parseInt(parts[0], 10);
+              month = parseInt(parts[1], 10) - 1;
+              year = parseInt(parts[2], 10);
+              if (year < 100) year += 2000;
+            }
+          }
+        } else {
+          const parsed = new Date(clean);
+          if (!isNaN(parsed.getTime())) {
+            year = parsed.getFullYear();
+            month = parsed.getMonth();
+            day = parsed.getDate();
           }
         }
       }
@@ -780,18 +803,23 @@
       if (isNaN(year) || isNaN(month) || isNaN(day)) return null;
 
       let hours = 9, minutes = 0;
-      if (timeVal && typeof timeVal === 'string') {
-        const timeParts = timeVal.trim().split(':');
-        if (timeParts.length >= 2) {
-          hours = parseInt(timeParts[0], 10) || 0;
-          minutes = parseInt(timeParts[1], 10) || 0;
+      if (timeVal) {
+        if (timeVal instanceof Date) {
+          hours = timeVal.getHours();
+          minutes = timeVal.getMinutes();
+        } else if (typeof timeVal === 'string') {
+          const timeParts = timeVal.trim().split(':');
+          if (timeParts.length >= 2) {
+            hours = parseInt(timeParts[0], 10) || 0;
+            minutes = parseInt(timeParts[1], 10) || 0;
+          }
         }
       }
 
       return new Date(year, month, day, hours, minutes);
     }
 
-    // Formateo de fecha en español (ej. "Viernes, 4 de septiembre de 2026")
+    // Formateo de fecha en español
     function formatFullDate(dateObj) {
       const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
       const formatted = dateObj.toLocaleDateString('es-ES', options);
@@ -812,22 +840,23 @@
               No hay reservas registradas actualmente
             </p>
             <p style="font-size: 0.84rem; max-width: 540px; margin: 0 auto; line-height: 1.5;">
-              Sube el archivo <code>Solicitud de préstamo y reserva de gafas de realidad virtual.xlsx</code> mediante el botón superior para calcular y mostrar de inmediato la próxima reserva agendada.
+              Sube el archivo <code>Solicitud de préstamo y reserva de gafas de realidad virtual.xlsx</code> usando el botón superior <strong>"Sincronizar Excel"</strong> para cargar las respuestas del formulario.
             </p>
           </div>
         `;
-        if (subtitle) subtitle.textContent = 'Sin reservas registradas';
+        if (subtitle) subtitle.textContent = 'Sin reservas cargadas';
         return;
       }
 
-      // Ordenar todas las reservas cronológicamente (la más temprana primero)
+      // Ordenar todas cronológicamente
       upcomingReservations.sort((a, b) => a.fullDate - b.fullDate);
 
       const now = new Date();
+      // Buscar la primera que sea igual o posterior a hoy (o la más reciente si todas son pasadas)
       const nextUpcoming = upcomingReservations.find(r => r.fullDate >= now) || upcomingReservations[0];
 
       if (subtitle) {
-        subtitle.textContent = `Próxima fecha: ${nextUpcoming.dateStr}`;
+        subtitle.textContent = `Total reservas cargadas: ${upcomingReservations.length} | Próxima: ${nextUpcoming.dateStr}`;
       }
 
       const diffDays = Math.ceil((nextUpcoming.fullDate - now) / (1000 * 60 * 60 * 24));
@@ -835,7 +864,7 @@
       if (diffDays === 0) timeBadge = '¡Es hoy!';
       else if (diffDays === 1) timeBadge = 'Mañana';
       else if (diffDays > 1) timeBadge = `En ${diffDays} días`;
-      else timeBadge = 'Fecha agendada';
+      else timeBadge = 'Reserva agendada';
 
       container.innerHTML = `
         <div class="next-res-card">
@@ -859,6 +888,12 @@
               <div class="label"><i class="fa-solid fa-vr-cardboard"></i> Gafas Solicitadas</div>
               <div class="value" style="color: var(--ufv-azul-claro); font-weight: 700;">
                 ${nextUpcoming.quantity} ${nextUpcoming.quantity === 1 ? 'unidad' : 'unidades'} Meta Quest 2
+              </div>
+            </div>
+            <div class="next-res-item">
+              <div class="label"><i class="fa-solid fa-users"></i> Alumnos Estimados</div>
+              <div class="value" style="color: #ffffff; font-weight: 600;">
+                ${nextUpcoming.students ? (String(nextUpcoming.students).toLowerCase().includes('alumno') ? nextUpcoming.students : nextUpcoming.students + ' alumnos') : 'No especificado'}
               </div>
             </div>
             <div class="next-res-item">
@@ -908,7 +943,7 @@
       }
     }
 
-    // Lector de archivos Excel mediante SheetJS
+    // Lector universal de archivos Excel (detecta automáticamente cualquier columna con fechas)
     function handleExcelUpload(event) {
       const file = event.target.files[0];
       if (!file) return;
@@ -917,28 +952,62 @@
       reader.onload = function(e) {
         try {
           const data = new Uint8Array(e.target.result);
-          const workbook = XLSX.read(data, { type: 'array' });
+          const workbook = XLSX.read(data, { type: 'array', cellDates: true });
           const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-          const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+          const jsonData = XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
 
-          const extractedReservations = [];
+          if (!jsonData || jsonData.length === 0) {
+            showToast('El archivo Excel está vacío o no contiene filas de datos.');
+            return;
+          }
+
+          const extracted = [];
 
           jsonData.forEach((row, rowIndex) => {
-            const name = (row['Nombre1'] ? `${row['Nombre1']} ${row['Apellidos'] || ''}` : row['Nombre'] || 'Usuario UFV').trim();
-            const email = (row['Email'] || row['Correo electrónico'] || '').trim();
-            const role = row['¿Cuál es tu rol?'] || 'Docente / Estudiante';
+            // Detección flexible de Nombre
+            const name = (row['Nombre1'] ? `${row['Nombre1']} ${row['Apellidos'] || ''}` : 
+                          row['Nombre y Apellidos'] || row['Nombre'] || row['Name'] || 'Usuario UFV').trim();
+            const email = (row['Email'] || row['Correo electrónico'] || row['Correo'] || '').trim();
+            const role = row['¿Cuál es tu rol?'] || row['Rol'] || 'Docente / Estudiante';
 
-            let degree = '';
+            // Detección de grado/facultad
+            let faculty = '';
             for (const key of Object.keys(row)) {
-              if (key.startsWith('Grado / Doble Grado') && row[key]) {
-                degree = row[key];
-                break;
+              if (key.toLowerCase().includes('grado') || key.toLowerCase().includes('facultad')) {
+                if (row[key]) { faculty = row[key]; break; }
+              }
+            }
+            if (!faculty) faculty = 'Universidad Francisco de Vitoria';
+
+            // Propósito / finalidad
+            let purpose = '';
+            for (const key of Object.keys(row)) {
+              if (key.toLowerCase().includes('para qué') || key.toLowerCase().includes('motivo') || key.toLowerCase().includes('finalidad')) {
+                if (row[key]) { purpose = row[key]; break; }
+              }
+            }
+
+            // Cantidad de gafas
+            let quantity = 1;
+            for (const key of Object.keys(row)) {
+              if (key.toLowerCase().includes('cuántas') || key.toLowerCase().includes('gafas')) {
+                const val = parseInt(row[key], 10);
+                if (!isNaN(val) && val > 0) { quantity = val; break; }
               }
             }
             const faculty = degree || row['Facultad'] || row['Área académica'] || 'UFV';
             const purpose = row['¿Para qué necesitas usar las gafas de realidad virtual? Sé lo más específico posible'] ||
                             row['¿Para qué vas a usar las gafas de realidad virtual?'] || '';
             const quantity = parseInt(row['¿Cuántas gafas necesitas?'], 10) || 1;
+
+            // Detección automática del número de alumnos o asistentes
+            let students = '';
+            for (const key of Object.keys(row)) {
+              if (/alumno|estudiante|asistente|participante/i.test(key) && row[key] !== undefined && row[key] !== '') {
+                students = String(row[key]).trim();
+                break;
+              }
+            }
 
             for (let i = 1; i <= 10; i++) {
               const dateField = `Fecha ${i}`;
@@ -960,6 +1029,7 @@
                     faculty,
                     purpose,
                     quantity,
+                    students,
                     dateStr: String(dateVal).trim(),
                     timeSlot: `${startTime} - ${endTime} h`,
                     fullDate: parsedDate
@@ -969,24 +1039,53 @@
             }
           });
 
-          upcomingReservations = extractedReservations;
-          renderNextReservation();
-          closeExcelModal();
+          if (extracted.length > 0) {
+            upcomingReservations = extracted;
+            // Guardar en el almacenamiento del navegador (persiste al recargar)
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(extracted.map(r => ({
+                ...r,
+                fullDate: r.fullDate.toISOString()
+              }))));
+            } catch (e) {
+              console.warn('No se pudo guardar en localStorage', e);
+            }
 
-          if (extractedReservations.length > 0) {
-            showToast(`¡Excel sincronizado! Se procesaron ${extractedReservations.length} reserva(s) agendada(s).`);
+            renderNextReservation();
+            closeExcelModal();
+            showToast(`¡Excel sincronizado! Se han cargado ${extracted.length} reserva(s) con éxito.`);
           } else {
-            showToast('El archivo se leyó correctamente, pero no contiene fechas en las columnas de reserva.');
+            showToast('Se leyó el Excel pero no se detectaron fechas en las columnas. Revisa los encabezados.');
           }
         } catch (err) {
-          showToast('Error al leer el archivo Excel. Asegúrate de subir el archivo .xlsx válido.');
+          console.error(err);
+          showToast('Error al leer el archivo. Asegúrate de subir el archivo .xlsx de Microsoft Forms.');
         }
       };
       reader.readAsArrayBuffer(file);
     }
 
+    // Cargar datos previos guardados al iniciar
+    function loadSavedReservations() {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            upcomingReservations = parsed.map(r => ({
+              ...r,
+              fullDate: new Date(r.fullDate)
+            }));
+          }
+        }
+      } catch (e) {
+        console.warn('Error al recuperar reservas guardadas', e);
+      }
+    }
+
     // Inicialización al cargar el DOM
     document.addEventListener('DOMContentLoaded', () => {
+      loadSavedReservations();
       renderInventory();
       renderNextReservation();
     });
