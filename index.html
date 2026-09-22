@@ -543,10 +543,10 @@
       <div class="brand-title">Reality <span>UFV</span></div>
     </div>
 
-    <nav>
-      <button class="nav-btn active" onclick="switchTab('home', event)">Inicio</button>
-      <button class="nav-btn" onclick="switchTab('inventory', event)">Inventario Gafas</button>
-      <button class="nav-btn" onclick="switchTab('lab', event)">Laboratorio Inmersivo</button>
+    <nav id="main-nav">
+      <button class="nav-btn active" data-tab="home" onclick="switchTab('home')">Inicio</button>
+      <button class="nav-btn" data-tab="inventory" onclick="switchTab('inventory')">Inventario Gafas</button>
+      <button class="nav-btn" data-tab="lab" onclick="switchTab('lab')">Laboratorio Inmersivo</button>
     </nav>
 
     <div class="header-actions">
@@ -718,16 +718,35 @@
       }
     }
 
-    // Navegación por pestañas
-    function switchTab(tabId, evt) {
-      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-      document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
+    // Navegación infalible por pestañas
+    function switchTab(tabId) {
+      // Ocultar todas las pestañas
+      const allTabs = document.querySelectorAll('.tab-content');
+      allTabs.forEach(tab => {
+        tab.classList.remove('active');
+        tab.style.display = 'none';
+      });
 
-      const target = document.getElementById('tab-' + tabId);
-      if (target) target.classList.add('active');
+      // Quitar clase activa a todos los botones
+      const allButtons = document.querySelectorAll('.nav-btn');
+      allButtons.forEach(btn => {
+        if (btn.getAttribute('data-tab') === tabId) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
 
-      if (evt && evt.target) {
-        evt.target.classList.add('active');
+      // Mostrar pestaña destino
+      const targetTab = document.getElementById('tab-' + tabId);
+      if (targetTab) {
+        targetTab.classList.add('active');
+        targetTab.style.display = 'block';
+      }
+
+      // Si se abre la pestaña de inventario, asegurar el renderizado
+      if (tabId === 'inventory') {
+        renderInventory();
       }
     }
 
@@ -821,6 +840,9 @@
 
     // Formateo de fecha en español
     function formatFullDate(dateObj) {
+      if (!dateObj || !(dateObj instanceof Date) || isNaN(dateObj.getTime())) {
+        return 'Fecha por confirmar';
+      }
       const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
       const formatted = dateObj.toLocaleDateString('es-ES', options);
       return formatted.charAt(0).toUpperCase() + formatted.slice(1);
@@ -832,7 +854,17 @@
       const subtitle = document.getElementById('next-res-subtitle');
       if (!container) return;
 
-      if (!upcomingReservations || upcomingReservations.length === 0) {
+      // Filtrar y validar reservas con fecha válida
+      const validReservations = upcomingReservations.filter(r => {
+        if (!r || !r.fullDate) return false;
+        const d = (r.fullDate instanceof Date) ? r.fullDate : new Date(r.fullDate);
+        return !isNaN(d.getTime());
+      }).map(r => ({
+        ...r,
+        fullDate: (r.fullDate instanceof Date) ? r.fullDate : new Date(r.fullDate)
+      }));
+
+      if (validReservations.length === 0) {
         container.innerHTML = `
           <div class="empty-state-box">
             <i class="fa-regular fa-calendar-xmark"></i>
@@ -848,15 +880,15 @@
         return;
       }
 
-      // Ordenar todas cronológicamente
-      upcomingReservations.sort((a, b) => a.fullDate - b.fullDate);
+      // Ordenar cronológicamente
+      validReservations.sort((a, b) => a.fullDate - b.fullDate);
 
       const now = new Date();
-      // Buscar la primera que sea igual o posterior a hoy (o la más reciente si todas son pasadas)
-      const nextUpcoming = upcomingReservations.find(r => r.fullDate >= now) || upcomingReservations[0];
+      // Buscar la primera que sea igual o posterior a hoy (o la más reciente)
+      const nextUpcoming = validReservations.find(r => r.fullDate >= now) || validReservations[0];
 
       if (subtitle) {
-        subtitle.textContent = `Total reservas cargadas: ${upcomingReservations.length} | Próxima: ${nextUpcoming.dateStr}`;
+        subtitle.textContent = `Total reservas cargadas: ${validReservations.length} | Próxima: ${nextUpcoming.dateStr || ''}`;
       }
 
       const diffDays = Math.ceil((nextUpcoming.fullDate - now) / (1000 * 60 * 60 * 24));
@@ -875,19 +907,19 @@
             </div>
             <span class="next-res-badge">
               <i class="fa-regular fa-clock" style="margin-right: 0.25rem;"></i>
-              ${nextUpcoming.timeSlot} • ${timeBadge}
+              ${nextUpcoming.timeSlot || '09:00 - 11:00 h'} • ${timeBadge}
             </span>
           </div>
 
           <div class="next-res-grid">
             <div class="next-res-item">
               <div class="label"><i class="fa-solid fa-user"></i> Solicitante</div>
-              <div class="value">${nextUpcoming.name} (${nextUpcoming.role})</div>
+              <div class="value">${nextUpcoming.name || 'Usuario UFV'} (${nextUpcoming.role || 'Docente'})</div>
             </div>
             <div class="next-res-item">
               <div class="label"><i class="fa-solid fa-vr-cardboard"></i> Gafas Solicitadas</div>
               <div class="value" style="color: var(--ufv-azul-claro); font-weight: 700;">
-                ${nextUpcoming.quantity} ${nextUpcoming.quantity === 1 ? 'unidad' : 'unidades'} Meta Quest 2
+                ${nextUpcoming.quantity || 1} ${(nextUpcoming.quantity === 1) ? 'unidad' : 'unidades'} Meta Quest 2
               </div>
             </div>
             <div class="next-res-item">
@@ -995,10 +1027,6 @@
                 if (!isNaN(val) && val > 0) { quantity = val; break; }
               }
             }
-            const faculty = degree || row['Facultad'] || row['Área académica'] || 'UFV';
-            const purpose = row['¿Para qué necesitas usar las gafas de realidad virtual? Sé lo más específico posible'] ||
-                            row['¿Para qué vas a usar las gafas de realidad virtual?'] || '';
-            const quantity = parseInt(row['¿Cuántas gafas necesitas?'], 10) || 1;
 
             // Detección automática del número de alumnos o asistentes
             let students = '';
@@ -1018,10 +1046,10 @@
               if (dateVal) {
                 const startTime = row[startField] || '09:00';
                 const endTime = row[endField] || '11:00';
-                const parsedDate = parseDateString(dateVal, startTime);
+                const parsedDate = parseDateUniversal(dateVal, startTime);
 
-                if (parsedDate) {
-                  extractedReservations.push({
+                if (parsedDate && !isNaN(parsedDate.getTime())) {
+                  extracted.push({
                     id: `${row['Id'] || rowIndex + 1}-${i}`,
                     name,
                     email,
@@ -1045,7 +1073,7 @@
             try {
               localStorage.setItem(STORAGE_KEY, JSON.stringify(extracted.map(r => ({
                 ...r,
-                fullDate: r.fullDate.toISOString()
+                fullDate: (r.fullDate instanceof Date) ? r.fullDate.toISOString() : r.fullDate
               }))));
             } catch (e) {
               console.warn('No se pudo guardar en localStorage', e);
@@ -1075,7 +1103,7 @@
             upcomingReservations = parsed.map(r => ({
               ...r,
               fullDate: new Date(r.fullDate)
-            }));
+            })).filter(r => !isNaN(r.fullDate.getTime()));
           }
         }
       } catch (e) {
